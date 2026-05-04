@@ -1,13 +1,22 @@
+-- Connected Discord-GitHub | Discord: crow_works | Roblox: imanthestranger
+
+--[[
+    System: Inventory UI Handler (OOP based)
+    Description: Handles client-side UI rendering, Viewport frame character cloning, 
+]]
+
 -- // Services
+
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local TweenService = game:GetService("TweenService")
-local RunService = game:GetService("RunService")
-local Players = game:GetService("Players")
-local Lighting = game:GetService("Lighting")
 local SoundService = game:GetService("SoundService")
+local RunService = game:GetService("RunService")
+local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
 
 -- // Variables
+
 local LocalPlayer = Players.LocalPlayer
 local LPCamera = workspace.CurrentCamera
 
@@ -24,35 +33,48 @@ local Utility = require(InventoryMFolder:WaitForChild("InventoryUtility"))
 local UIFolder = ReplicatedStorage:WaitForChild("UI")
 local InventoryUI = UIFolder:WaitForChild("Inventory")
 
--- // Handler Module
-local InventoryHandler = {
-    Inventory = {},
-    KeyBind = Enum.KeyCode.G,
-    UI = InventoryUI,
-    UIEnabled = false,
-    LastPressed = 0,
-    Cooldown = 1,
+-- // OOP Class Setup
+local InventoryHandler = {}
+InventoryHandler.__index = InventoryHandler
+
+--[[
+    Constructor Method
+    Reasoning: Implements metatables to create a self-contained object. This ensures 
+    state variables (like selected UI elements and cooldowns) do not bleed into the global 
+    scope, preventing memory leaks and logical errors during rapid UI toggling.
+]]
+function InventoryHandler.new()
+    local self = setmetatable({}, InventoryHandler)
     
-    -- Dragging State
-    MainSelected = nil,
-    SelectedUI = nil,
-    GrabUpdate = nil,
+    self.Inventory = {}
+    self.KeyBind = Enum.KeyCode.G
+    self.UI = InventoryUI
+    self.UIEnabled = false
+    self.LastPressed = 0
+    self.Cooldown = 1
     
-    -- Viewport State
-    ViewportCamera = Instance.new("Camera"),
-    RotationY = 0,
-    DraggingViewport = false,
-    LastMousePosition = Vector2.zero,
-    ViewportCharacter = nil
-}
+    -- Dragging State Management
+    self.MainSelected = nil
+    self.SelectedUI = nil
+    self.GrabUpdate = nil
+    
+    -- Viewport State Management
+    self.ViewportCamera = Instance.new("Camera")
+    self.RotationY = 0
+    self.DraggingViewport = false
+    self.LastMousePosition = Vector2.zero
+    self.ViewportCharacter = nil
+    self.Tweens = {}
+    
+    return self
+end
 
 -- // Core Initialization
 function InventoryHandler:Initialize()
     self.Inventory = GetInfo:InvokeServer()
     self.UI.Parent = LocalPlayer:WaitForChild("PlayerGui")
-    self.UI.Enabled = true -- Hide visual elements, keep UI active for inputs
+    self.UI.Enabled = true 
     
-    -- Give information to the inventory util
     Utility.UI = self.UI
 
     self:CacheUIElements()
@@ -62,10 +84,16 @@ function InventoryHandler:Initialize()
     self:SetupNetwork()
     self:SetupInput()
     
-    self:ToggleUI(false) -- Ensure UI starts hidden
+    self:ToggleUI(false) 
 end
 
--- // Method: Cache UI Elements
+--[[
+    Method: Cache UI Elements
+    Reasoning: Caching UI pathways in memory during initialization prevents the engine 
+    from having to perform costly WaitForChild or FindFirstChild lookups every frame 
+    during execution.
+]]
+
 function InventoryHandler:CacheUIElements()
     self.SlotBG = self.UI:WaitForChild("SlotBG")
     self.ClothSlots = self.SlotBG:WaitForChild("ClothSlots")
@@ -90,12 +118,17 @@ function InventoryHandler:CacheUIElements()
     end
 end
 
--- // Method: Setup Viewport
+--[[
+    Method: Setup Viewport
+    Reasoning: The character model is cloned ONLY when added, not on a loop. 
+    A CFrame mathematical offset is calculated dynamically via RenderStepped to allow 
+    smooth horizontal rotation around the Yaxis without constantly creating garbage data
+]]
+
 function InventoryHandler:SetupViewport()
     self.ViewportCamera.FieldOfView = 80
     self.CharacterPort.CurrentCamera = self.ViewportCamera
     
-    -- Clone Character ONCE, not on a loop
     local function LoadCharacter(character)
         if self.ViewportCharacter then
             self.ViewportCharacter:Destroy()
@@ -106,16 +139,12 @@ function InventoryHandler:SetupViewport()
         self.ViewportCharacter.Parent = self.CharacterPort
         self.ViewportCharacter.Name = "Character"
         
-        -- Default Position
         self.ViewportCharacter:SetPrimaryPartCFrame(CFrame.new(Vector3.zero) * CFrame.Angles(0, math.rad(180), 0))
     end
 
-    if LocalPlayer.Character then
-        LoadCharacter(LocalPlayer.Character)
-    end
+    if LocalPlayer.Character then LoadCharacter(LocalPlayer.Character) end
     LocalPlayer.CharacterAdded:Connect(LoadCharacter)
 
-    -- Handle Rotation safely
     RunService.RenderStepped:Connect(function()
         if not self.UIEnabled or not self.ViewportCharacter then return end
         
@@ -129,33 +158,33 @@ function InventoryHandler:SetupViewport()
     end)
 end
 
--- // Method: Setup Animations
+--[[
+    Method: Setup Animations
+    Reasoning: Pre-creates TweenService objects during initialization. Reusing these 
+    cached objects rather than instantiating new Tweens every time the UI opens prevents 
+    massive memory spikes and GC (Garbage Collection) drops.
+]]
 function InventoryHandler:SetupAnimations()
     self.InventoryBlur = Instance.new("BlurEffect", Lighting)
     self.InventoryBlur.Size = 0
 
-    -- Tween Caching for performance
-    self.Tweens = {
-        BlurIn = TweenService:Create(self.InventoryBlur, TweenInfo.new(1), {Size = 24}),
-        BlurOut = TweenService:Create(self.InventoryBlur, TweenInfo.new(0.5), {Size = 0}),
-        ZoomIn = TweenService:Create(self.ViewportCamera, TweenInfo.new(0.75), {FieldOfView = 70}),
-        ZoomOut = TweenService:Create(self.ViewportCamera, TweenInfo.new(0.75), {FieldOfView = 90}),
-        LPZoomIn = TweenService:Create(LPCamera, TweenInfo.new(0.75), {FieldOfView = 60}),
-        LPZoomOut = TweenService:Create(LPCamera, TweenInfo.new(0.75), {FieldOfView = 70}),
-        BgShow = TweenService:Create(self.UIBackground, TweenInfo.new(0.5), {BackgroundTransparency = 0.4}),
-        BgHide = TweenService:Create(self.UIBackground, TweenInfo.new(0.5), {BackgroundTransparency = 1}),
-        PortShow = TweenService:Create(self.CharacterPortBG, TweenInfo.new(0.5), {Position = UDim2.new(0.229, 0, 0.493, 0), Size = UDim2.new(0.182, 0, 0.563, 0)}),
-        PortHide = TweenService:Create(self.CharacterPortBG, TweenInfo.new(0.5), {Position = UDim2.new(0.229, 0, 0.493, 0), Size = UDim2.new(0, 0, 0, 0)}),
-        SlotsShow = TweenService:Create(self.ItemSlotsMain, TweenInfo.new(0.33), {Size = UDim2.new(0.432, 0, 0.128, 0)}),
-        SlotsHide = TweenService:Create(self.ItemSlotsMain, TweenInfo.new(0.33), {Size = UDim2.new(0, 0, 0, 0)})
-    }
+    self.Tweens.BlurIn = TweenService:Create(self.InventoryBlur, TweenInfo.new(1), {Size = 24})
+    self.Tweens.BlurOut = TweenService:Create(self.InventoryBlur, TweenInfo.new(0.5), {Size = 0})
+    self.Tweens.ZoomIn = TweenService:Create(self.ViewportCamera, TweenInfo.new(0.75), {FieldOfView = 70})
+    self.Tweens.ZoomOut = TweenService:Create(self.ViewportCamera, TweenInfo.new(0.75), {FieldOfView = 90})
+    self.Tweens.LPZoomIn = TweenService:Create(LPCamera, TweenInfo.new(0.75), {FieldOfView = 60})
+    self.Tweens.LPZoomOut = TweenService:Create(LPCamera, TweenInfo.new(0.75), {FieldOfView = 70})
+    self.Tweens.BgShow = TweenService:Create(self.UIBackground, TweenInfo.new(0.5), {BackgroundTransparency = 0.4})
+    self.Tweens.BgHide = TweenService:Create(self.UIBackground, TweenInfo.new(0.5), {BackgroundTransparency = 1})
+    self.Tweens.PortShow = TweenService:Create(self.CharacterPortBG, TweenInfo.new(0.5), {Position = UDim2.new(0.229, 0, 0.493, 0), Size = UDim2.new(0.182, 0, 0.563, 0)})
+    self.Tweens.PortHide = TweenService:Create(self.CharacterPortBG, TweenInfo.new(0.5), {Position = UDim2.new(0.229, 0, 0.493, 0), Size = UDim2.new(0, 0, 0, 0)})
+    self.Tweens.SlotsShow = TweenService:Create(self.ItemSlotsMain, TweenInfo.new(0.33), {Size = UDim2.new(0.432, 0, 0.128, 0)})
+    self.Tweens.SlotsHide = TweenService:Create(self.ItemSlotsMain, TweenInfo.new(0.33), {Size = UDim2.new(0, 0, 0, 0)})
     
-    -- Setup Hotbar layout defaults
     TweenService:Create(self.HotbarGrid, TweenInfo.new(0.5), {CellSize = UDim2.new(0.172, 0, 0.76, 0)}):Play()
     TweenService:Create(self.HotbarGrid, TweenInfo.new(0.75), {CellPadding = UDim2.new(0.02, 0, 0.027, 0)}):Play()
 end
 
--- // Method: UI Toggle Logic
 function InventoryHandler:ToggleUI(state)
     self.UIEnabled = state
     self.ItemSlotsMain.Visible = state
@@ -188,7 +217,12 @@ function InventoryHandler:ToggleUI(state)
     end
 end
 
--- // Method: Parse Inventory Slots
+--[[
+    Method: Slot Generation
+    Reasoning: Dynamically iterates through the UI hierarchy to populate the 
+    data-driven self.Inventory array based on frame names, allowing for scalable 
+    inventory sizing without hardcoding values.
+]]
 function InventoryHandler:SetupSlots()
     local BL = {"Hotbar", "Main"}
 
@@ -208,7 +242,6 @@ function InventoryHandler:SetupSlots()
     self.ItemSlots.DescendantAdded:Connect(RegisterSlot)
 end
 
--- // Method: Network Signals
 function InventoryHandler:SetupNetwork()
     AddItem.OnClientEvent:Connect(function(Name, Amount)
         Utility:AddItem(self.Inventory, Name, Amount)
@@ -219,9 +252,14 @@ function InventoryHandler:SetupNetwork()
     end)
 end
 
--- // Method: Input Handling (Dragging & Toggling)
+--[[
+    Method: Input Handlers
+    Reasoning: Separating inputs into logical blocks. For the dragging mechanic, 
+    we explicitly use direct UDim2 positional updates bound to RenderStepped. Using TweenService 
+    to track a rapidly moving mouse cursor causes massive overhead and input lag. Direct CFrame 
+    and Vector updates are essential for UI fluidity.
+]]
 function InventoryHandler:SetupInput()
-    -- UI Toggle
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if gameProcessed then return end
         if input.KeyCode == self.KeyBind then
@@ -231,22 +269,21 @@ function InventoryHandler:SetupInput()
         end
     end)
 
-    -- Viewport Rotation & Item Dragging Initialization
     UserInputService.InputBegan:Connect(function(input, gameProcessed)
         if not self.UIEnabled or input.UserInputType ~= Enum.UserInputType.MouseButton1 then return end
 
         local mousePos = UserInputService:GetMouseLocation()
-        
-        -- Check Viewport Drag
         local absPos = self.CharacterPort.AbsolutePosition
         local absSize = self.CharacterPort.AbsoluteSize
+        
+        -- Check if mouse is interacting with the Viewport Frame
         if mousePos.X >= absPos.X and mousePos.X <= absPos.X + absSize.X and mousePos.Y >= absPos.Y and mousePos.Y <= absPos.Y + absSize.Y then
             self.DraggingViewport = true
             self.LastMousePosition = mousePos
             return
         end
 
-        -- Check Item Grab
+        -- Check if grabbing an inventory item
         self.SelectedUI = Utility:GetGrabbingUI()
         self.MainSelected = self.SelectedUI
 
@@ -269,26 +306,25 @@ function InventoryHandler:SetupInput()
             self.SelectedUI.SlotImage.ImageTransparency = 0.5
             self.SelectedUI.CanvasGroup.Visible = false
 
-            -- Efficient Dragging Update (NO TWEENS)
+            -- Frame-perfect Drag Tracking
             self.GrabUpdate = RunService.RenderStepped:Connect(function()
                 local currentMouse = UserInputService:GetMouseLocation()
-                -- Direct CFrame/Position update is infinitely faster than TweenService here
                 self.SelectedUI.Position = UDim2.fromOffset(currentMouse.X, currentMouse.Y)
             end)
         end
     end)
 
-    -- Handle Drag Movement (Viewport)
     UserInputService.InputChanged:Connect(function(input, gameProcessed)
         if self.DraggingViewport and input.UserInputType == Enum.UserInputType.MouseMovement then
             local currentPosition = UserInputService:GetMouseLocation()
             local delta = currentPosition - self.LastMousePosition
             self.LastMousePosition = currentPosition
+            
+            -- Adjust horizontal rotation dynamically
             self.RotationY = self.RotationY - delta.X * 0.5
         end
     end)
 
-    -- Item Drop & Viewport Drag End
     UserInputService.InputEnded:Connect(function(input, gameProcessed)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
             self.DraggingViewport = false
@@ -316,6 +352,8 @@ function InventoryHandler:SetupInput()
     end)
 end
 
--- // Initialize and Return
-InventoryHandler:Initialize()
-return InventoryHandler
+-- // Initialize System
+local PlayerInventory = InventoryHandler.new()
+PlayerInventory:Initialize()
+
+return PlayerInventory
