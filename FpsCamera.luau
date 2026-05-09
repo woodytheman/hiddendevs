@@ -384,8 +384,8 @@ end
 -- shadow projection from the engine's shadow mapping system.
 --=========================================================================
 
--- Returns the direction of the primary shadow-casting light source.
--- Falls back to moon direction when the sun is below the horizon.
+-- Gives the direction of the shadowcasting light source.
+-- Returns moon direction when the sun is below the horizon.
 function FpsCamera:GetShadowDirection(): Vector3
 	local sunDir = Lighting:GetSunDirection()
 
